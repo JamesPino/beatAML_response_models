@@ -1,3 +1,5 @@
+import os.path
+
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
@@ -7,7 +9,7 @@ from scipy.stats import pearsonr, spearmanr
 from sklearn import metrics
 from sklearn.model_selection import RepeatedKFold
 
-from pybeataml.load_data import AMLData
+from pybeataml.data import AMLData
 from pybeataml.load_data_from_synpase import load_file
 from datetime import date
 
@@ -50,7 +52,7 @@ good_param = dict(
     n_jobs=None,
     objective='regression',
     metric='rmse',
-    lambda_l1=10,
+    lambda_l1=50,
     lambda_l2=1,
     reg_alpha=None,
     reg_lambda=None,
@@ -169,35 +171,43 @@ def run_model(d_sets, drug_name):
 
     print('\t', d_sets, drug_name)
     with pd.option_context("display.precision", 2):
-        print(all_results[cols])
+        print(all_results[cols].head(3))
     all_results.feature_names = all_results.feature_names.str.join('|')
     return all_results
 
+all_sources = ['proteomics','rna_seq', 'phospho', 'acetyl',
+ 'metabolomics_HILIC', 'metabolomics_RP', 'lipidomics',  'wes', ]
+def run_all_sources(my_drug,
+                    sources=all_sources,
+                    ):
+    drug_output_f_name = f'results/{my_drug}.csv'
+    if os.path.exists(drug_output_f_name):
+        return pd.read_csv(drug_output_f_name, index_col=0)
 
-def run_all_sources(my_drug, all_sources=['wes', 'rna_seq', 'proteomics', 'phospho', 'acetyl',
-                                          'metabolomics_HILIC', 'metabolomics_RP', 'lipidomics'],
-                    old_sources=['wes', 'rna_seq', 'proteomics', 'phospho']):
     # generate all possible combinations of input data
     data_sources = []
-    for l in range(len(all_sources) + 1):
-        for subset in it.combinations(all_sources, l):
+    for l in range(len(sources) + 1):
+        for subset in it.combinations(sources, l):
             data_sources.append(subset)
     data_sources = data_sources[1:]  # 63
-
-    old_data_sources = []
-    for l in range(len(old_sources) + 1):
-        for subset in it.combinations(old_sources, l):
-            old_data_sources.append(subset)
-    old_data_sources = old_data_sources[1:]  # 15
-
-    # data_sources = [i for i in data_sources if i not in old_data_sources] # 48
 
     models = []
     print(f"Working on {my_drug}")
     for j in data_sources:
-        models.append(run_model(j, my_drug))
+        if not isinstance(j, str):
+            out_name = '_'.join(sorted(j))
+        else:
+            out_name = j
+        f_output_name = f"results/{my_drug}_{out_name}.csv"
+        if not os.path.exists(f_output_name):
+            data_results = run_model(j, my_drug)
+            data_results.to_csv(f_output_name)
+        else:
+            data_results = pd.read_csv(f_output_name, index_col=0)
+            print(f"Skipping {f_output_name}")
+        models.append(data_results)
     results = pd.concat(models)
-    results.to_csv(f'results/{my_drug}.csv')
+    results.to_csv(drug_output_f_name)
     return results
 
 
@@ -232,18 +242,14 @@ if __name__ == '__main__':
     good_drugs = set(drug_solo).intersection(high_occ_drugs)
     print(len(good_drugs))
 
-    # adding FLT3 inhibitors back in.
     for i in drugs_to_focus:
         if i not in good_drugs:
             good_drugs.add(i)
     good_drugs = list(sorted(good_drugs))
     new_models = []
-    for i in good_drugs:
+    for i in list(reversed(good_drugs))[:2]:
         new_models.append(run_all_sources(i))
     df = pd.concat(new_models, )
 
-    # old_models = load_file('syn52299998')
-    # df_final = pd.concat(df, old_models)
-
-    f_name = f"regression_all_models_all_data_combos_cv_5v5{str(date.today())}.csv"
+    f_name = f"regression_all_models_all_data_combos_cv_5v5_{str(date.today())}.csv"
     df.to_csv(f_name)
