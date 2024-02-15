@@ -10,7 +10,6 @@ from sklearn import metrics
 from sklearn.model_selection import RepeatedKFold
 
 from pybeataml.data import AMLData
-from pybeataml.load_data_from_synpase import load_file
 from datetime import date
 
 # point of access for all data
@@ -52,11 +51,11 @@ good_param = dict(
     n_jobs=None,
     objective='regression',
     metric='rmse',
-    lambda_l1=50,
+    lambda_l1=1000,
     lambda_l2=1,
     reg_alpha=None,
     reg_lambda=None,
-    learning_rate=.1,
+    learning_rate=.05,
     tree_learner='serial',
     max_bin=128,
     num_leaves=5,
@@ -129,14 +128,19 @@ def run_model(d_sets, drug_name):
     features = df_subset.features
     target = df_subset.target
     feature_names = list(set(features.columns.values))
+    # need at least 10 samples to keep test more than 2 samples
+    if target.shape[0] < 10:
+        return pd.DataFrame([])
 
     all_results = []
 
-    kf = RepeatedKFold(n_splits=5, n_repeats=5, random_state=101)
+    kf = RepeatedKFold(n_splits=5, n_repeats=3, random_state=101)
 
     for n, (train_index, test_index) in enumerate(kf.split(features)):
         x_train, x_test = features.iloc[train_index], features.iloc[test_index]
         y_train, y_test = target[train_index], target[test_index]
+        if y_test.shape[0] < 2:
+            pass
 
         args = dict(
             x_train=x_train,
@@ -175,8 +179,10 @@ def run_model(d_sets, drug_name):
     all_results.feature_names = all_results.feature_names.str.join('|')
     return all_results
 
-all_sources = ['proteomics','rna_seq', 'phospho', 'acetyl',
- 'metabolomics_HILIC', 'metabolomics_RP', 'lipidomics',  'wes', ]
+all_sources = [
+    'proteomics', 'rna_seq', 'phospho', 'acetyl',
+    # 'metabolomics_HILIC', 'metabolomics_RP', 'lipidomics',  #'wes',
+               ]
 def run_all_sources(my_drug,
                     sources=all_sources,
                     ):
@@ -212,9 +218,15 @@ def run_all_sources(my_drug,
 
 
 if __name__ == '__main__':
-    new_data_samples = set(data.lipidomics.sample_id.values)
-
+    new_data_samples = set(data.metabolomics_RP.sample_id.values)
     print(len(new_data_samples))
+    new_data_samples = set(data.metabolomics_HILIC.sample_id.values)
+    print(len(new_data_samples))
+    new_data_samples = set(data.lipidomics.sample_id.values)
+    print(len(new_data_samples))
+    new_data_samples = set(data.acetyl.sample_id.values)
+    print(len(new_data_samples))
+
     print(len(new_data_samples.intersection(data.acetyl.sample_id.values)))
     # samples don't all have rnaseq (why o why ohsu)
     print(len(new_data_samples.intersection(data.rna.sample_id.values)))
@@ -232,13 +244,16 @@ if __name__ == '__main__':
     # only run single drugs for now
     drug_solo = [i for i in responsive_drugs if ' - ' not in i]
     drugs_to_focus = [
-        'Gilteritinib',
+        # 'Gilteritinib', only 6 samples with data
         'Quizartinib (AC220)',
         'Trametinib (GSK1120212)',
         'Sorafenib',
         'Panobinostat',
         'Venetoclax',
     ]
+    run_all_sources('Venetoclax')
+    run_all_sources('Panobinostat')
+    quit()
     good_drugs = set(drug_solo).intersection(high_occ_drugs)
     print(len(good_drugs))
 
@@ -247,7 +262,7 @@ if __name__ == '__main__':
             good_drugs.add(i)
     good_drugs = list(sorted(good_drugs))
     new_models = []
-    for i in list(reversed(good_drugs))[:2]:
+    for i in list(reversed(good_drugs))[10:]:
         new_models.append(run_all_sources(i))
     df = pd.concat(new_models, )
 
