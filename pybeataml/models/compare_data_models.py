@@ -47,11 +47,11 @@ def run_sklearn(x_train, y_train, x_test, y_test, model, model_name):
 good_param = dict(
     device_type='cpu',
     boosting_type='gbdt',
-    num_threads=8,
+    num_threads=4,
     n_jobs=None,
     objective='regression',
     metric='rmse',
-    lambda_l1=1000,
+    lambda_l1=50,
     lambda_l2=1,
     reg_alpha=None,
     reg_lambda=None,
@@ -181,14 +181,20 @@ def run_model(d_sets, drug_name):
 
 all_sources = [
     'proteomics', 'rna_seq', 'phospho', 'acetyl',
-    # 'metabolomics_HILIC', 'metabolomics_RP', 'lipidomics',  #'wes',
-               ]
+    'lipidomics',
+    'metabolomics',
+    # 'metabolomics_HILIC', 'metabolomics_RP'
+
+
+#'wes',
+]
 def run_all_sources(my_drug,
                     sources=all_sources,
                     ):
-    drug_output_f_name = f'results/{my_drug}.csv'
-    if os.path.exists(drug_output_f_name):
-        return pd.read_csv(drug_output_f_name, index_col=0)
+    results_folder = 'subset_with_lipidomics'
+    drug_output_f_name = f'{results_folder}/redo_{my_drug}.csv'
+    # if os.path.exists(drug_output_f_name):
+    #     return pd.read_csv(drug_output_f_name, index_col=0)
 
     # generate all possible combinations of input data
     data_sources = []
@@ -204,13 +210,13 @@ def run_all_sources(my_drug,
             out_name = '_'.join(sorted(j))
         else:
             out_name = j
-        f_output_name = f"results/{my_drug}_{out_name}.csv"
-        if not os.path.exists(f_output_name):
+        f_output_name = f"{results_folder}/{my_drug}_{out_name}.csv"
+        if 'acetyl' not in f_output_name and os.path.exists(f_output_name):
+            print(f"Skipping {f_output_name}")
+            data_results = pd.read_csv(f_output_name, index_col=0)
+        else:
             data_results = run_model(j, my_drug)
             data_results.to_csv(f_output_name)
-        else:
-            data_results = pd.read_csv(f_output_name, index_col=0)
-            print(f"Skipping {f_output_name}")
         models.append(data_results)
     results = pd.concat(models)
     results.to_csv(drug_output_f_name)
@@ -222,16 +228,21 @@ if __name__ == '__main__':
     print(len(new_data_samples))
     new_data_samples = set(data.metabolomics_HILIC.sample_id.values)
     print(len(new_data_samples))
+
     new_data_samples = set(data.lipidomics.sample_id.values)
-    print(len(new_data_samples))
-    new_data_samples = set(data.acetyl.sample_id.values)
-    print(len(new_data_samples))
+    # print(len(new_data_samples))
+    # new_data_samples = set(data.acetyl.sample_id.values)
 
     print(len(new_data_samples.intersection(data.acetyl.sample_id.values)))
     # samples don't all have rnaseq (why o why ohsu)
     print(len(new_data_samples.intersection(data.rna.sample_id.values)))
+    print(len(new_data_samples.intersection(data.proteomics.sample_id.values)))
+
     # this allows a better comparison between datasets. New data is a subset of old data.
     data.flat_data = data.flat_data[data.flat_data.sample_id.isin(new_data_samples)].copy()
+
+    print(f'total # of samples left {len(data.flat_data.sample_id.unique())}')
+    # quit()
     table = data.auc_table[data.drug_names].copy()
     table = table.loc[new_data_samples, :]
 
@@ -252,8 +263,8 @@ if __name__ == '__main__':
         'Venetoclax',
     ]
     run_all_sources('Venetoclax')
-    run_all_sources('Panobinostat')
-    quit()
+    # run_all_sources('Panobinostat')
+    # quit()
     good_drugs = set(drug_solo).intersection(high_occ_drugs)
     print(len(good_drugs))
 
@@ -262,9 +273,9 @@ if __name__ == '__main__':
             good_drugs.add(i)
     good_drugs = list(sorted(good_drugs))
     new_models = []
-    for i in list(reversed(good_drugs))[10:]:
+    for i in list(reversed(good_drugs)):
         new_models.append(run_all_sources(i))
     df = pd.concat(new_models, )
 
-    f_name = f"regression_all_models_all_data_combos_cv_5v5_{str(date.today())}.csv"
+    f_name = f"redo_regression_all_models_all_data_combos_cv_5v5_{str(date.today())}.csv"
     df.to_csv(f_name)
