@@ -1,10 +1,7 @@
 """
 First pass at data centered class.
 Ideally a single class instance can handle loading of the entire dataset.
-TODO
-    - Add cache mechanism for quick storage/loading rather than going to synap
-    - Think of a way to get current feature cols and drug cols from
-    a subset data, add functionality
+
 """
 import os
 import re
@@ -38,28 +35,30 @@ lipidomics_id = 'syn52121001'
 meta_file_id2 = 'syn25807733'
 acetyl_id = 'syn53484994'
 
-def scale_col(my_col, method = "z"):
-    if method == "median_sub":
-        my_col = my_col - my_col.median()
-    elif method == "median_div":
-        my_col = my_col / my_col.median()
-    elif method == "z":
-        my_col = (my_col - my_col.mean()) / my_col.std()
-    elif method == "maxMin":
-        my_col = 2*(my_col - my_col.min()) / (my_col.max() - my_col.min()) - 1
+
+def scale_col(my_col, method="z"):
+    operations = {
+        "median_sub": lambda x: x - x.median(),
+        "median_div": lambda x: x / x.median(),
+        "z": lambda x: (x - x.mean()) / x.std(),
+        "maxMin": lambda x: 2 * (x - x.min()) / (x.max() - x.min()) - 1
+    }
+
+    if method in operations:
+        my_col = operations[method](my_col)
     else:
         warnings.warn("column was not scaled. method must be either 'median', 'maxMin', or 'z'")
+
     return my_col
 
+
 def load_meta_for_ids():
-    f_name = 'data/meta_ids.csv'
-    f_name = os.path.join(os.path.dirname(__file__), f_name)
+    f_name = os.path.join(os.path.dirname(__file__), 'data/meta_ids.csv')
     if os.path.exists(f_name):
         return pd.read_csv(f_name)
-    ex10Metadata_df = load_file(meta_file_id2)
-    if not os.path.exists(f_name):
-        ex10Metadata_df.to_csv(f_name)
-    return ex10Metadata_df
+    metadata_df = load_file(meta_file_id2)
+    metadata_df.write_csv(f_name)
+    return metadata_df
 
 
 def prep_rnaseq():
@@ -72,19 +71,15 @@ def prep_rnaseq():
     subset.columns = ['gene_symbol', 'sample_id', 'exp_value']
     subset['source'] = 'rna_seq'
     subset['label'] = subset.gene_symbol + '_rna'
-
-    if not os.path.exists(f_name):
-        subset.to_csv(f_name)
-
+    subset.to_csv(f_name)
     return subset
 
+
 def prep_metabolomics_HILIC(confidence="high"):
-    f_name = 'data/metabolomics_HILIC.csv'
-    f_name = os.path.join(os.path.dirname(__file__), f_name)
+    f_name = os.path.join(os.path.dirname(__file__), 'data/metabolomics_HILIC.csv')
     if os.path.exists(f_name):
         return pd.read_csv(f_name)
-    cols = ['display_label', 'sample_id',
-            'exp_value']
+    cols = ['display_label', 'sample_id', 'exp_value']
 
     # import HILIC pos & neg and drop extra rows & columns
     data_pos = load_excel(metabolomics_id, 0)
@@ -164,6 +159,7 @@ def prep_metabolomics_HILIC(confidence="high"):
     subset['source'] = 'metabolomics'
     subset['label'] = subset.display_label + '_met_HILIC'
     subset['label'] = subset['label'].apply(lambda x: re.sub('[^A-Za-z0-9_]+', '', x))
+    subset.to_csv(f_name)
     return subset
 
 
@@ -177,22 +173,23 @@ def prep_metabolomics_HILIC(confidence="high"):
     data = extract_sample_ids(data)
     data = convert_sample_ids_to_barcode_ids(data)
     subset = reformat_data(data)
-
-    if not os.path.exists(f_name):
-        subset.to_csv(f_name)
+    subset.to_csv(f_name)
 
     return subset
+
 
 def load_and_process_data(confidence):
     data_pos = load_and_process_excel(metabolomics_id, 0, 570, 131 if confidence == "high" else 0)
     data_neg = load_and_process_excel(metabolomics_id, 1, 336, 75 if confidence == "high" else 0)
     return data_pos, data_neg
 
+
 def load_and_process_excel(id, sheet, drop_rows, additional_drop_rows):
     data = load_excel(id, sheet)
     data = data.iloc[:-(drop_rows + additional_drop_rows)]
     data = data.drop(columns=data.columns[data.columns.str.startswith('Blank_')])
-    data = data.drop(columns=data.columns[data.columns.str.contains('m/z|RT \[min\]|Tags|Standardized name|Super class|Main class| Sub class|Formula|Annot. DeltaMass \[ppm\]|Annotation MW|Reference Ion')])
+    data = data.drop(columns=data.columns[data.columns.str.contains(
+        'm/z|RT \[min\]|Tags|Standardized name|Super class|Main class| Sub class|Formula|Annot. DeltaMass \[ppm\]|Annotation MW|Reference Ion')])
     data = data.T
     data.columns = data.iloc[0]
     data = data[1:].apply(pd.to_numeric, errors='coerce').apply(scale_col)
@@ -200,10 +197,13 @@ def load_and_process_excel(id, sheet, drop_rows, additional_drop_rows):
     data = pd.melt(data, id_vars=['SampleID.abbrev'], var_name='display_label', value_name='exp_value')
     return data
 
+
 def extract_sample_ids(data):
-    data['SampleID.abbrev'] = data['SampleID.abbrev'].apply(lambda st: st[st.find("BEAT_AML_PNL_") + len("BEAT_AML_PNL_"):st.find("_M")])
+    data['SampleID.abbrev'] = data['SampleID.abbrev'].apply(
+        lambda st: st[st.find("BEAT_AML_PNL_") + len("BEAT_AML_PNL_"):st.find("_M")])
     data['SampleID.abbrev'] = pd.to_numeric(data['SampleID.abbrev'], errors='coerce').astype(pd.Int16Dtype())
     return data
+
 
 def convert_sample_ids_to_barcode_ids(data):
     ex10Metadata_df = load_meta_for_ids()[['SampleID.abbrev', 'Barcode.ID']]
@@ -211,15 +211,17 @@ def convert_sample_ids_to_barcode_ids(data):
     data = data.rename(columns={'Barcode.ID': 'sample_id'})
     return data
 
+
 def reformat_data(data):
     subset = data[['display_label', 'sample_id', 'exp_value']]
     subset['source'] = 'metabolomics'
     subset['label'] = subset.display_label + '_met_HILIC'
     subset['label'] = subset['label'].apply(lambda x: re.sub('[^A-Za-z0-9_]+', '', x))
     return subset
+
+
 def prep_metabolomics_RP(confidence="high"):
-    f_name = 'data/metabolomics_RP.csv'
-    f_name = os.path.join(os.path.dirname(__file__), f_name)
+    f_name = os.path.join(os.path.dirname(__file__), 'data/metabolomics_RP.csv')
     if os.path.exists(f_name):
         return pd.read_csv(f_name)
     cols = ['display_label', 'sample_id',
@@ -302,18 +304,17 @@ def prep_metabolomics_RP(confidence="high"):
     subset['source'] = 'metabolomics'
     subset['label'] = subset.display_label + '_met_RP'
     subset['label'] = subset['label'].apply(lambda x: re.sub('[^A-Za-z0-9_]+', '', x))
-    if not os.path.exists(f_name):
-        subset.to_csv(f_name)
+
+    subset.to_csv(f_name)
     return subset
 
 
 def prep_lipidomics():
-    f_name = 'data/lipidomics.csv'
-    f_name = os.path.join(os.path.dirname(__file__), f_name)
+
+    f_name = os.path.join(os.path.dirname(__file__), 'data/lipidomics.csv')
     if os.path.exists(f_name):
-        return pd.read_csv(f_name)  
-    cols = ['display_label', 'sample_id',
-            'exp_value']
+        return pd.read_csv(f_name)
+    cols = ['display_label', 'sample_id', 'exp_value']
 
     # import pos & neg and drop extra columns
     data_pos = load_excel(lipidomics_id, 1)
@@ -330,10 +331,10 @@ def prep_lipidomics():
                                       'CPTAC4_AML_WB_L_QC_04_Lumos_Pos_18Feb23_Crater-WCSH315305',
                                       'CPTAC4_AML_WB_L_QC_05_Lumos_Pos_18Feb23_Crater-WCSH315305',
                                       'CPTAC4_AML_WB_L_QC_06_Lumos_Pos_18Feb23_Crater-WCSH315305',
-                                      'CPTAC4_AML_WB_L_QC_07_Lumos_Pos_18Feb23_Crater-WCSH315305']) # drop CPTAC4
+                                      'CPTAC4_AML_WB_L_QC_07_Lumos_Pos_18Feb23_Crater-WCSH315305'])  # drop CPTAC4
     data_pos = data_pos.drop(columns=['Alignment ID', 'Average Rt(min)',
                                       'Average Mz', 'Adduct type',
-                                      'Reference m/z', 'Formula', 
+                                      'Reference m/z', 'Formula',
                                       'Ontology', 'MS/MS spectrum'])
 
     data_neg = load_excel(lipidomics_id, 0)
@@ -350,15 +351,15 @@ def prep_lipidomics():
                                       'CPTAC4_AML_WB_L_QC_04_Lumos_Neg_22Feb23_Crater-WCSH315305',
                                       'CPTAC4_AML_WB_L_QC_05_Lumos_Neg_22Feb23_Crater-WCSH315305',
                                       'CPTAC4_AML_WB_L_QC_06_Lumos_Neg_22Feb23_Crater-WCSH315305',
-                                      'CPTAC4_AML_WB_L_QC_07_Lumos_Neg_22Feb23_Crater-WCSH315305']) # drop CPTAC4
+                                      'CPTAC4_AML_WB_L_QC_07_Lumos_Neg_22Feb23_Crater-WCSH315305'])  # drop CPTAC4
     data_neg = data_neg.drop(columns=['Alignment ID', 'Average Rt(min)',
                                       'Average Mz', 'Adduct type',
-                                      'Reference m/z', 'Formula', 
+                                      'Reference m/z', 'Formula',
                                       'Ontology', 'MS/MS spectrum'])
-    
+
     # average across duplicate compound names
-    data_pos = data_pos.groupby(['Metabolite name'], as_index = False).mean()
-    data_neg = data_neg.groupby(['Metabolite name'], as_index = False).mean()
+    data_pos = data_pos.groupby(['Metabolite name'], as_index=False).mean()
+    data_neg = data_neg.groupby(['Metabolite name'], as_index=False).mean()
 
     # normalize data
     data_pos = data_pos.T
@@ -366,7 +367,7 @@ def prep_lipidomics():
     data_pos = data_pos[1:]
     data_pos = data_pos.apply(pd.to_numeric, errors='coerce')
     data_pos = data_pos.apply(scale_col)
-    
+
     data_neg = data_neg.T
     data_neg.columns = data_neg.iloc[0]
     data_neg = data_neg[1:]
@@ -375,93 +376,88 @@ def prep_lipidomics():
 
     # reformat to long format and combine pos & neg data
     data_pos['SampleID.abbrev'] = data_pos.index
-    data_pos = pd.melt(data_pos, id_vars=['SampleID.abbrev'], 
-                        var_name = 'display_label', value_name='exp_value')
-    
+    data_pos = pd.melt(data_pos, id_vars=['SampleID.abbrev'],
+                       var_name='display_label', value_name='exp_value')
+
     data_neg['SampleID.abbrev'] = data_neg.index
-    data_neg = pd.melt(data_neg, id_vars=['SampleID.abbrev'], 
-                        var_name = 'display_label', value_name='exp_value')
+    data_neg = pd.melt(data_neg, id_vars=['SampleID.abbrev'],
+                       var_name='display_label', value_name='exp_value')
 
     data = pd.concat([data_pos, data_neg])
-    #data['exp_value'] = scale_col(data['exp_value'])
+    # data['exp_value'] = scale_col(data['exp_value'])
 
     # extract sample IDs from labID column
     string1 = "BEAT_AML_PNL_"
-    data['SampleID.abbrev'] = data['SampleID.abbrev'].apply(lambda st: st[st.find(string1) + len(string1):st.find("_L")])
-    data['SampleID.abbrev'] = pd.to_numeric(data['SampleID.abbrev'], errors = 'coerce').astype(pd.Int16Dtype())
+    data['SampleID.abbrev'] = data['SampleID.abbrev'].apply(
+        lambda st: st[st.find(string1) + len(string1):st.find("_L")])
+    data['SampleID.abbrev'] = pd.to_numeric(data['SampleID.abbrev'], errors='coerce').astype(pd.Int16Dtype())
 
     # convert sample IDs to barcode IDs
     ex10Metadata_df = load_meta_for_ids()
     ex10Metadata_df = ex10Metadata_df[['SampleID.abbrev', 'Barcode.ID']]
     data = pd.merge(data, ex10Metadata_df)
     data = data.rename(columns={'Barcode.ID': 'sample_id'})
-    
+
     # reformat data
     subset = data.loc[:, cols]
     subset['source'] = 'lipidomics'
     subset['label'] = subset['display_label'] + '_lip'
     subset['label'] = subset['label'].apply(lambda x: re.sub('[^A-Za-z0-9_]+', '', x))
-    if not os.path.exists(f_name):
-        subset.to_csv(f_name)
+
+    subset.to_csv(f_name)
     return subset
 
+
 def prep_phosph():
-    f_name = 'data/phospho.csv'
-    f_name = os.path.join(os.path.dirname(__file__), f_name)
-    if os.path.exists(f_name):
-        return pd.read_csv(f_name)
-    pho_cols = ['Gene', 'SiteID', 'LogRatio',
-                'SampleID.full', 'Barcode.ID']
-    phosp_mapper = {
+    file_path = os.path.join(os.path.dirname(__file__), 'data/phospho.csv')
+
+    if os.path.exists(file_path):
+        return pd.read_csv(file_path)
+
+    phospho_data = load_table(phospho_id)
+    phosph_subset = phospho_data[['Gene', 'SiteID', 'LogRatio', 'SampleID.full', 'Barcode.ID']]
+    phosph_subset.rename(columns={
         'Gene': 'gene_symbol',
         'SiteID': 'label',
         'LogRatio': 'exp_value',
         'SampleID.full': 'sample_id_full',
         'Barcode.ID': 'sample_id',
-    }
-    phospho_data = load_table(phospho_id)
-    phosph_subset = phospho_data.loc[:, pho_cols]
-    phosph_subset.rename(phosp_mapper, axis=1, inplace=True)
+    }, inplace=True)
     phosph_subset['source'] = 'phospho'
-    if not os.path.exists(f_name):
-        phosph_subset.to_csv(f_name)
+
+    phosph_subset.to_csv(file_path)
+
     return phosph_subset
 
+
 def prep_acetyl():
-    f_name = 'data/acetyl.csv'
-    f_name = os.path.join(os.path.dirname(__file__), f_name)
-    if os.path.exists(f_name):
-        return pd.read_csv(f_name)
-    acetyl_cols = ['gene_symbol', 'label', 'exp_value',
-                'sample_id_full', 'sample_id']
+    file_path = os.path.join(os.path.dirname(__file__), 'data/acetyl.csv')
+
+    if os.path.exists(file_path):
+        return pd.read_csv(file_path)
+
     acetyl_data = load_file(acetyl_id)
-    
-    # melt into long format
     acetyl_data['label'] = acetyl_data.index
-    acetyl_data = pd.melt(acetyl_data, id_vars=['label'], 
-                        var_name = 'SampleID.full', value_name='exp_value')
-    
-    # extract Gene from SiteID
-    acetyl_data['gene_symbol'] = acetyl_data['label'].str.split('-', expand = True)[0]
-    
-    # convert sample IDs to barcode IDs
-    ex10Metadata_df = load_meta_for_ids()
-    ex10Metadata_df = ex10Metadata_df[['SampleID.full', 'Barcode.ID']]
+    acetyl_data = pd.melt(acetyl_data, id_vars=['label'], var_name='SampleID.full', value_name='exp_value')
+    acetyl_data['gene_symbol'] = acetyl_data['label'].str.split('-', expand=True)[0]
+
+    ex10Metadata_df = load_meta_for_ids()[['SampleID.full', 'Barcode.ID']]
     acetyl_data = pd.merge(acetyl_data, ex10Metadata_df)
-    acetyl_data = acetyl_data.rename(columns={'Barcode.ID': 'sample_id',
-                                              'SampleID.full': 'sample_id_full'})
-    
-    acetyl_subset = acetyl_data.loc[:, acetyl_cols]
+    acetyl_data = acetyl_data.rename(columns={'Barcode.ID': 'sample_id', 'SampleID.full': 'sample_id_full'})
+
+    acetyl_subset = acetyl_data[['gene_symbol', 'label', 'exp_value', 'sample_id_full', 'sample_id']]
     acetyl_subset['source'] = 'acetyl'
-    if not os.path.exists(f_name):
-        acetyl_subset.to_csv(f_name)
+
+    acetyl_subset.to_csv(file_path)
+
     return acetyl_subset
 
+
 def prep_proteomics():
-    f_name = 'data/global.csv'
-    f_name = os.path.join(os.path.dirname(__file__), f_name)
+    f_name = os.path.join(os.path.dirname(__file__), 'data/global.csv')
     if os.path.exists(f_name):
         return pd.read_csv(f_name)
+
     proteomics_mapper = {
         'Gene': 'gene_symbol',
         'SiteID': 'label',
@@ -480,8 +476,8 @@ def prep_proteomics():
     # add source and label column for MAGINE
     proteomics['label'] = proteomics.gene_symbol + '_prot'
     proteomics['source'] = 'proteomics'
-    if not os.path.exists(f_name):
-        proteomics.to_csv(f_name)
+
+    proteomics.to_csv(f_name)
     return proteomics
 
 
@@ -496,8 +492,7 @@ def load_drug_response():
     response_data.deviance = response_data.deviance.astype(float)
 
     # create this column as filter column
-    response_data[
-        'new_col'] = response_data.proteomic_lab_id + '_' + response_data.inhibitor
+    response_data['new_col'] = response_data.proteomic_lab_id + '_' + response_data.inhibitor
     to_remove = []
     # If multiple measurements, remove if std(auc) >50 (seems to be skewed
     # to remove larger auc)
@@ -535,16 +530,14 @@ def load_mutations():
     -------
 
     """
-    f_name = 'data/wes.csv'
-    f_name = os.path.join(os.path.dirname(__file__), f_name)
+    f_name = os.path.join(os.path.dirname(__file__), 'data/wes.csv')
     if os.path.exists(f_name):
         return pd.read_csv(f_name)
     df = load_table(wes_id)
-    mapper = {
-        'symbol': 'gene_symbol',
-        'labId': 'sample_id',
-    }
-    df.rename(mapper, axis=1, inplace=True)
+    df.rename(
+        {'symbol': 'gene_symbol', 'labId': 'sample_id'},
+        axis=1, inplace=True
+    )
     df['exp_value'] = 1
     wes_gene_level = pd.pivot_table(
         df,
@@ -574,157 +567,96 @@ def load_mutations():
     wes_aa_level['source'] = 'wes_protein_level'
     wes_aa_level['exp_value'] = wes_aa_level['value']
     merged = pd.concat([wes_gene_level, wes_aa_level])
-    if not os.path.exists(f_name):
-        merged.to_csv(f_name)
+
+    merged.to_csv(f_name)
     return merged
+
+
+def convert_to_matrix(flat_dataframe):
+    df = pd.pivot_table(
+        flat_dataframe,
+        index='sample_id',
+        values='exp_value',
+        columns='label'
+    )
+    return df
 
 
 class AMLData(object):
     def __init__(self):
-        self.drug_names = None
-        self._auc_table = None
         self.proteomics = prep_proteomics()
         self.phospho = prep_phosph()
-        self.rna = prep_rnaseq()
+        self.rna_seq = prep_rnaseq()
         self.functional = load_drug_response()
         self.wes = load_mutations()
         self.metabolomics_HILIC = prep_metabolomics_HILIC()
         self.metabolomics_RP = prep_metabolomics_RP()
+        self.metabolomics = pd.concat([self.metabolomics_HILIC, self.metabolomics_RP])
         self.lipidomics = prep_lipidomics()
         self.acetyl = prep_acetyl()
         self.flat_data = pd.concat(
-            [self.phospho, self.proteomics, self.rna, self.wes,
-             self.metabolomics_HILIC, self.metabolomics_RP, 
-             self.lipidomics, self.acetyl]
+            [self.phospho, self.proteomics, self.rna_seq, self.wes,
+             self.metabolomics, self.lipidomics, self.acetyl]
         )
 
         self.meta = add_cluster_plus_meta()
         self.meta = self.meta.join(load_cluster_pred())
-        # self.flt3 = self.meta.loc[self.meta['FLT3-ITDcalls']].index.values
-        # self.non_flt3 = self.meta.loc[~self.meta['FLT3-ITDcalls']].index.values
-        self.all_data = self.convert_to_matrix(self.flat_data)
-        self.feature_names = list(self.all_data.columns.values)
-        self.feature_names.remove('sample_id')
 
+        self.feature_names = self.flat_data['label'].unique().tolist()
+
+        self._auc_table = pd.pivot_table(
+            self.functional,
+            index='sample_id', columns='inhibitor', values='auc'
+        )
+        self.drug_names = list(self._auc_table.columns.unique())
+        self.auc_table = self._auc_table.join(self.meta, on='sample_id')
         # format for magine.ExperimentalData class
-        d = self.flat_data.rename({'gene_symbol': 'identifier'}, axis=1)
-        d['species_type'] = 'gene'
-        # self.exp_data = ExperimentalData(d)
+        self.flat_data.rename({'gene_symbol': 'identifier'}, axis=1, inplace=True)
+        self.flat_data['species_type'] = 'gene'
+        self._exp_data = None
+
+    @property
+    def exp_data(self):
+        if self._exp_data is None:
+            self._exp_data = ExperimentalData(self.flat_data)
+
+        return self._exp_data
 
     def add_meta(self, pivoted_table):
         return self.meta.join(pivoted_table)
 
-    @property
-    def auc_table(self):
-        if self._auc_table is None:
-            self._auc_table = pd.pivot_table(
-                self.functional,
-                index='sample_id', columns='inhibitor', values='auc'
-            )
-            self.drug_names = list(self._auc_table.columns.unique())
-            self._auc_table = self._auc_table.join(self.meta, on='sample_id')
-        return self._auc_table
-
-    @auc_table.setter
-    def auc_table(self, new_val):
-        self._auc_table = new_val
-
     def subset(self, source, with_meta=False):
-        if isinstance(source, str):
-            source = [source]
-        subset = self.flat_data.loc[self.flat_data.source.isin(source)]
-        if with_meta:
-            return self.add_meta(
-                self.convert_to_matrix(subset).set_index('sample_id'))
-        else:
-            return self.convert_to_matrix(subset)
+        _subset = self.subset_flat(source)
+        return self.add_meta(convert_to_matrix(_subset)) if with_meta else convert_to_matrix(_subset)
 
     def subset_flat(self, source):
-        if isinstance(source, str):
-            source = [source]
+        source = [source] if isinstance(source, str) else source
         return self.flat_data.loc[self.flat_data.source.isin(source)]
 
-    def convert_to_matrix(self, flat_dataframe):
-        df = pd.pivot_table(
-            flat_dataframe,
-            index='sample_id',
-            values='exp_value',
-            columns='label'
-        ).reset_index()
-        return df
-        # until meta info is added to tables, commenting this out
-        # return df.join(self.meta, on='sample_id').reset_index()
-
-    def get_trainable_data(self, source, drug_name, new_format=False,
-                           flt3_only=False, non_flt3_only=False,
-                           cluster=None):
-        # Filter experimental platform
+    def get_trainable_data(self, source, drug_name, new_format=False, drop_cols=True,  drop_rows=False):
         mol_data = self.subset(source)
-        feature_names = list(mol_data.columns.values)
-        if 'sample_id' in feature_names:
-            feature_names.remove('sample_id')
-        # merge with auc table to get row=patient, col=genes + drug_auc
-        joined = mol_data.join(
-            self.auc_table[drug_name],
-            on='sample_id'
-        ).set_index('sample_id')
+        if isinstance(source, list):
+            sample_ids = [set(self.__getattribute__(i).sample_id.values) for i in source]
+            mol_data = mol_data.loc[list(set.intersection(*sample_ids))]
 
-        # remove rows without an AUC measurement
-        df_subset = joined[~joined[drug_name].isna()].copy()
+        df_subset = mol_data.join(self.auc_table[drug_name]).dropna(subset=[drug_name])
 
         # require 50% of the data be present for any given column
-        df_subset.dropna(
-            axis=0,
-            #how='any',
-            thresh=df_subset.shape[1] * .50,
-            inplace=True
-        )
-        # filter down if missing any measured cols
-        # TODO Ask Camilo about the data filling
-        n_features_remaining = df_subset.shape[0]
+        if drop_cols:
+            df_subset.dropna(axis=1, thresh=int(df_subset.shape[0] * .50), inplace=True)
+        # filter row/sample if missing half the feature values
+        if drop_rows:
+            df_subset.dropna(axis=0, thresh=int(df_subset.shape[1] * .50), inplace=True)
 
-        df_subset.dropna(
-            axis=1,
-            #how='any',
-            thresh=n_features_remaining,
-            inplace=True
-        )
-        if new_format:
-            return SampleByClusterDataSet(
-                self,
-                df_subset,
-                drug_name,
-                flt3_only=flt3_only,
-                non_flt3_only=non_flt3_only,
-                cluster=cluster
-            )
-        return df_subset
+        return SampleByClusterDataSet(df_subset, drug_name) if new_format else df_subset
 
 
 class SampleByClusterDataSet(object):
     def __init__(self,
-                 data,
                  df,
                  target_name,
-                 flt3_only=False,
-                 non_flt3_only=False,
-                 cluster=None
                  ):
         self._df = df
-
-        if flt3_only:
-            index_vals = set(self._df.index.values).intersection(data.flt3)
-            self.df = self._df.loc[index_vals].copy()
-        elif non_flt3_only:
-            index_vals = set(self._df.index.values).intersection(data.non_flt3)
-            self.df = self._df.loc[index_vals].copy()
-
-        if cluster:
-            k5_cluster = data.meta['k=4'].copy()
-            sub = k5_cluster[k5_cluster == cluster].index.values
-            index_vals = set(self._df.index.values).intersection(sub)
-            self._df = self._df.loc[index_vals]
-
         feat_names = list(set(self._df.columns.values))
         if target_name in feat_names:
             feat_names.remove(target_name)
@@ -761,8 +693,7 @@ class SampleByClusterDataSet(object):
 
 
 def add_cluster_plus_meta():
-    f_name = 'data/meta_labels.csv'
-    f_name = os.path.join(os.path.dirname(__file__), f_name)
+    f_name = os.path.join(os.path.dirname(__file__), 'data/meta_labels.csv')
     if os.path.exists(f_name):
         return pd.read_csv(f_name, index_col='sample_id')
     clusters = load_file(clusters_id)
@@ -789,24 +720,22 @@ def add_cluster_plus_meta():
     }
     summary.replace(rename, inplace=True)
     merged = summary.join(clusters.set_index('sample_id'))
-    if not os.path.exists(f_name):
-        merged.to_csv(f_name)
+
+    merged.to_csv(f_name)
     return merged
 
 
 def load_cluster_pred():
-    f_name = 'data/cluster_pred.csv'
-    f_name = os.path.join(os.path.dirname(__file__), f_name)
+    f_name = os.path.join(os.path.dirname(__file__), 'data/cluster_pred.csv')
     if os.path.exists(f_name):
         return pd.read_csv(f_name, index_col=0)
+
     cluster_pred = load_file('syn30030154')
-    cluster_pred['sample_id'] = cluster_pred['Barcode.ID']
-    del cluster_pred['Barcode.ID']
-    cluster_pred['Cluster'] = cluster_pred['Cluster'].str.split(' ').str.get(
-        1).astype(int)
+    cluster_pred.rename(columns={'Barcode.ID': 'sample_id'}, inplace=True)
+    cluster_pred['Cluster'] = cluster_pred['Cluster'].str.split(' ').str[1].astype(int)
     cluster_pred.set_index('sample_id', inplace=True)
-    if not os.path.exists(f_name):
-        cluster_pred.to_csv(f_name)
+
+    cluster_pred.to_csv(f_name)
     return cluster_pred
 
 

@@ -123,13 +123,14 @@ def score_all(y_test, preds):
     return error, r2, pearson, spearman, pr, sr
 
 
-def run_model(d_sets, drug_name):
-    df_subset = data.get_trainable_data(d_sets, drug_name, new_format=True)
+def run_model(d_sets, drug_name, f_output_name):
+    df_subset = data.get_trainable_data(list(d_sets), drug_name, new_format=True, )
     features = df_subset.features
     target = df_subset.target
     feature_names = list(set(features.columns.values))
+
     # need at least 10 samples to keep test more than 2 samples
-    if target.shape[0] < 10:
+    if target.shape[0] < 20:
         return pd.DataFrame([])
 
     all_results = []
@@ -150,15 +151,7 @@ def run_model(d_sets, drug_name):
         )
 
         gbt_results = run_gbt(feature_names=feature_names, **args)
-
-        # enet_results = run_sklearn(
-        #     model=en_model, model_name='EN', **args
-        # )
-
-        results = pd.DataFrame(
-            #[enet_results, gbt_results]
-            [gbt_results]
-        )
+        results = pd.DataFrame([gbt_results])
 
         results['k'] = n
         all_results.append(results)
@@ -170,38 +163,73 @@ def run_model(d_sets, drug_name):
     all_results = pd.concat(all_results)
     all_results['drug_name'] = drug_name
     all_results['data_type'] = out_name
-    cols = ['model', 'n_feat', 'rmse', 'r2',
-            'pearson', 'spearman', ]
+    cols = ['model', 'n_feat', 'rmse', 'r2', 'pearson', 'spearman', ]
 
     print('\t', d_sets, drug_name)
     with pd.option_context("display.precision", 2):
         print(all_results[cols].head(3))
     all_results.feature_names = all_results.feature_names.str.join('|')
+    all_results.to_csv(f_output_name)
     return all_results
 
-all_sources = [
-    'proteomics', 'rna_seq', 'phospho', 'acetyl',
-    'lipidomics',
-    'metabolomics',
-    # 'metabolomics_HILIC', 'metabolomics_RP'
 
 
-#'wes',
-]
-def run_all_sources(my_drug,
-                    sources=all_sources,
-                    ):
-    results_folder = 'subset_with_lipidomics'
-    drug_output_f_name = f'{results_folder}/redo_{my_drug}.csv'
-    # if os.path.exists(drug_output_f_name):
-    #     return pd.read_csv(drug_output_f_name, index_col=0)
-
+def generate_source_combos():
+    sources = [
+        'proteomics', 'rna_seq', 'phospho', 'acetyl',
+        'lipidomics',
+        'metabolomics',
+        # 'metabolomics_HILIC', 'metabolomics_RP'
+        # 'wes',
+    ]
     # generate all possible combinations of input data
     data_sources = []
     for l in range(len(sources) + 1):
         for subset in it.combinations(sources, l):
             data_sources.append(subset)
     data_sources = data_sources[1:]  # 63
+    return data_sources
+
+
+data_sources = generate_source_combos()
+
+
+def generate_summary_of_drugs(d_sets, drug_name):
+    df_subset = data.get_trainable_data(d_sets, drug_name, new_format=True)
+    target = df_subset.target
+    output = [drug_name, ':'.join(sorted(d_sets)), target.shape[0]]
+    print(f"{output[0]} :: {output[1]} = {output[2]}")
+    return output
+
+
+def generate_summary_table(drugs):
+    """
+    This function generates a summary table for a given list of drugs.
+    The summary includes the drug name, data type, and the number of samples available for each drug.
+
+    Parameters:
+    drugs (list): A list of drug names for which the summary table is to be generated.
+
+    Returns:
+    DataFrame: A pandas DataFrame containing the summary information for each drug.
+    The DataFrame has columns: 'drug', 'data_type', 'n_samples'.
+    'drug' column contains the name of the drug.
+    'data_type' column contains the type of data available for the drug.
+    'n_samples' column contains the number of samples available for the drug.
+    """
+    output = []
+    for i in drugs:
+        # for j in data_sources:
+        output.append(generate_summary_of_drugs(['lipidomics'], i))
+        output.append(generate_summary_of_drugs(['lipidomics', 'rna_seq'], i))
+    return pd.DataFrame(output, columns=['drug', 'data_type', 'n_samples'])
+
+
+def run_all_sources(my_drug,):
+    results_folder = 'test'
+
+    if not os.path.exists(results_folder):
+        os.mkdir(results_folder)
 
     models = []
     print(f"Working on {my_drug}")
@@ -210,44 +238,32 @@ def run_all_sources(my_drug,
             out_name = '_'.join(sorted(j))
         else:
             out_name = j
-        f_output_name = f"{results_folder}/{my_drug}_{out_name}.csv"
-        if 'acetyl' not in f_output_name and os.path.exists(f_output_name):
-            print(f"Skipping {f_output_name}")
-            data_results = pd.read_csv(f_output_name, index_col=0)
-        else:
-            data_results = run_model(j, my_drug)
-            data_results.to_csv(f_output_name)
-        models.append(data_results)
-    results = pd.concat(models)
-    results.to_csv(drug_output_f_name)
-    return results
+        models.append(run_model(j, my_drug, f"{results_folder}/{my_drug}_{out_name}.csv"))
+
+    models = pd.concat(models)
+    models.to_csv(f'{results_folder}/redo_{my_drug}.csv')
+    return models
 
 
 if __name__ == '__main__':
-    new_data_samples = set(data.metabolomics_RP.sample_id.values)
-    print(len(new_data_samples))
-    new_data_samples = set(data.metabolomics_HILIC.sample_id.values)
-    print(len(new_data_samples))
+    generate_summary_table(['Venetoclax'])
+    table = data.auc_table[data.drug_names].copy()
+    summary = generate_summary_table(data.drug_names)
+    summary.to_csv('counts_of_data_combo_to_drug.csv')
+    summary.pivot_table(index='drug', columns='data_type', values='n_samples').to_csv('pivot_counts_of_data_combo_to_drug.csv')
+
 
     new_data_samples = set(data.lipidomics.sample_id.values)
-    # print(len(new_data_samples))
-    # new_data_samples = set(data.acetyl.sample_id.values)
-
-    print(len(new_data_samples.intersection(data.acetyl.sample_id.values)))
-    # samples don't all have rnaseq (why o why ohsu)
-    print(len(new_data_samples.intersection(data.rna.sample_id.values)))
-    print(len(new_data_samples.intersection(data.proteomics.sample_id.values)))
-
     # this allows a better comparison between datasets. New data is a subset of old data.
     data.flat_data = data.flat_data[data.flat_data.sample_id.isin(new_data_samples)].copy()
 
     print(f'total # of samples left {len(data.flat_data.sample_id.unique())}')
-    # quit()
-    table = data.auc_table[data.drug_names].copy()
-    table = table.loc[new_data_samples, :]
 
-    # at least 100 samples
+
+    # at least 20 samples
     drug_counts = table.describe().T['count']
+    print(drug_counts.sort_values())
+
     high_occ_drugs = drug_counts[drug_counts > 20].index.values
 
     counts = table[table < 100].count()
@@ -264,7 +280,7 @@ if __name__ == '__main__':
     ]
     run_all_sources('Venetoclax')
     # run_all_sources('Panobinostat')
-    # quit()
+
     good_drugs = set(drug_solo).intersection(high_occ_drugs)
     print(len(good_drugs))
 
