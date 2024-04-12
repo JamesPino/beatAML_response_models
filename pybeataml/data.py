@@ -637,7 +637,7 @@ class AMLData(object):
         mol_data = self.subset(source)
         if isinstance(source, list):
             sample_ids = [set(self.__getattribute__(i).sample_id.values) for i in source]
-            mol_data = mol_data.loc[list(set.intersection(*sample_ids))]
+            mol_data = mol_data.loc[list(set.intersection(*sample_ids).intersection(mol_data.index.values))]
 
         df_subset = mol_data.join(self.auc_table[drug_name]).dropna(subset=[drug_name])
 
